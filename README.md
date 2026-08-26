@@ -65,11 +65,10 @@ Les variables de contact de la boutique sont également configurables :
 
 ```
 app/                    Routes (expo-router)
-  (tabs)/               Accueil, Catégories, Recherche, Panier, Profil
+  (tabs)/               Accueil, Catégories, Recherche, Commandes, Panier, Profil
   produit/[id]          Fiche produit
   catalogue             Catalogue, filtres et tri
-  commande/             Checkout en 5 étapes + confirmation
-  commandes/            Historique et suivi client
+  commande/             Checkout en 5 étapes + confirmation PDF
   auth/                 Connexion, inscription, mot de passe oublié
   profil/               Informations, adresses
   admin/                Espace administrateur (accès protégé)
@@ -81,7 +80,7 @@ src/
   hooks/                useAsync, useDebounce, useGrid, useAddToCart
   services/             Passerelle de paiement
   theme/                Design tokens (couleurs, espacements, typographie)
-  utils/                Formatage, validation, visuels, logique produit
+  utils/                Formatage, validation, visuels, PDF de confirmation
 supabase/migrations/    Schéma SQL et politiques RLS
 ```
 
@@ -113,8 +112,8 @@ Changer de backend ne modifie aucun composant d'interface.
 **Côté client** — accueil (carrousel promotionnel, catégories, populaires, promotions,
 nouveautés), catalogue avec recherche tolérante aux fautes, 12 filtres et 7 tris, fiche
 produit avec variantes et prix dynamique, avis, favoris, panier avec codes promo,
-checkout en 5 étapes, suivi de commande à 7 statuts, profil, adresses, notifications,
-paramètres et contact WhatsApp.
+checkout en 5 étapes, confirmation PDF, suivi de commande à 7 statuts, profil, adresses,
+notifications, paramètres et contact WhatsApp.
 
 **Côté administrateur** — tableau de bord (chiffre d'affaires, commandes, panier moyen,
 alertes de stock) avec courbes, histogrammes et répartition par catégorie ; gestion des
