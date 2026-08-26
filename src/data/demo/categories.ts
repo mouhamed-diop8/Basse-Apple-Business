@@ -1,0 +1,128 @@
+import { Category } from '../types';
+
+/**
+ * Les identifiants sont lisibles volontairement : ils servent aussi de slug
+ * d'URL et de clé de rattachement dans le catalogue de démonstration.
+ */
+export const demoCategories: Category[] = [
+  {
+    id: 'iphone',
+    name: 'iPhone',
+    slug: 'iphone',
+    description: 'Toute la gamme iPhone, neuve et reconditionnée.',
+    image: '',
+    icon: 'phone-portrait',
+    position: 1,
+  },
+  {
+    id: 'smartphones',
+    name: 'Smartphones',
+    slug: 'smartphones',
+    description: 'Samsung, Google, Xiaomi et autres marques.',
+    image: '',
+    icon: 'phone-portrait-outline',
+    position: 2,
+  },
+  {
+    id: 'macbook',
+    name: 'MacBook',
+    slug: 'macbook',
+    description: 'MacBook Air et MacBook Pro, puces Apple Silicon.',
+    image: '',
+    icon: 'laptop-outline',
+    position: 3,
+  },
+  {
+    id: 'laptops',
+    name: 'PC Portables',
+    slug: 'pc-portables',
+    description: 'Dell, HP, Lenovo, Asus — bureautique et professionnel.',
+    image: '',
+    icon: 'laptop',
+    position: 4,
+  },
+  {
+    id: 'tablets',
+    name: 'Tablettes',
+    slug: 'tablettes',
+    description: 'iPad et tablettes Android.',
+    image: '',
+    icon: 'tablet-landscape-outline',
+    position: 5,
+  },
+  {
+    id: 'monitors',
+    name: 'Écrans',
+    slug: 'ecrans',
+    description: 'Moniteurs bureautiques, création et gaming.',
+    image: '',
+    icon: 'desktop-outline',
+    position: 6,
+  },
+  {
+    id: 'storage',
+    name: 'Stockage',
+    slug: 'stockage',
+    description: 'SSD externes, clés USB et cartes mémoire.',
+    image: '',
+    icon: 'save-outline',
+    position: 7,
+  },
+  {
+    id: 'audio',
+    name: 'Audio',
+    slug: 'audio',
+    description: 'AirPods, casques et enceintes.',
+    image: '',
+    icon: 'headset-outline',
+    position: 8,
+  },
+  {
+    id: 'keyboards',
+    name: 'Claviers',
+    slug: 'claviers',
+    description: 'Claviers sans fil, mécaniques et ergonomiques.',
+    image: '',
+    icon: 'keypad-outline',
+    position: 9,
+  },
+  {
+    id: 'mice',
+    name: 'Souris',
+    slug: 'souris',
+    description: 'Souris sans fil, ergonomiques et de précision.',
+    image: '',
+    icon: 'radio-button-on-outline',
+    position: 10,
+  },
+  {
+    id: 'printers',
+    name: 'Imprimantes',
+    slug: 'imprimantes',
+    description: 'Laser et jet d’encre, mono et multifonction.',
+    image: '',
+    icon: 'print-outline',
+    position: 11,
+  },
+  {
+    id: 'accessories',
+    name: 'Accessoires',
+    slug: 'accessoires',
+    description: 'Chargeurs, câbles, hubs et protections.',
+    image: '',
+    icon: 'flash-outline',
+    position: 12,
+  },
+  {
+    id: 'office',
+    name: 'Bureautique',
+    slug: 'bureautique',
+    description: 'Onduleurs, supports, webcams et confort de bureau.',
+    image: '',
+    icon: 'briefcase-outline',
+    position: 13,
+  },
+];
+
+export const categoryById = (id: string): Category | undefined =>
+  demoCategories.find((c) => c.id === id);

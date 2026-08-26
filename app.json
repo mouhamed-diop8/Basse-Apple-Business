@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Basse Apple Business",
+    "slug": "basse-apple-business",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "techstore",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "backgroundColor": "#FFFFFF",
+    "splash": {
+      "backgroundColor": "#0A0A0A",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.techstore.app"
+    },
+    "android": {
+      "package": "com.techstore.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0A0A"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-splash-screen",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "L'application accède à vos photos pour ajouter des images de produits."
+        }
+      ],
+      "expo-sharing"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}
