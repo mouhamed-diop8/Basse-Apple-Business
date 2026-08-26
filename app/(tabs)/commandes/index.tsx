@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { OrderStatusBadge } from '@/components/orders/OrderTimeline';
+import { TicketActions } from '@/components/orders/TicketActions';
 import {
   AppText,
   Button,
@@ -16,7 +17,9 @@ import {
 } from '@/components/ui';
 import { db } from '@/data';
 import { useAsync } from '@/hooks/useAsync';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/store/auth';
+import { rememberGuestOrderEmail } from '@/store/guestOrder';
 import { toast } from '@/store/toast';
 import { colors, layout, radius, spacing } from '@/theme';
 import { formatDate, formatPrice, pluralize } from '@/utils/format';
@@ -24,22 +27,29 @@ import { formatDate, formatPrice, pluralize } from '@/utils/format';
 const OrderLookup = () => {
   const router = useRouter();
   const [reference, setReference] = useState('');
+  const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     const needle = reference.trim().toUpperCase();
+    const mail = email.trim().toLowerCase();
     if (!needle) {
-      toast.error('Saisissez le numéro de commande (ex. TS-24081).');
+      toast.error('Saisissez le numéro de commande (ex. BAB-…).');
+      return;
+    }
+    if (!mail.includes('@')) {
+      toast.error('Indiquez l’email utilisé lors de la commande.');
       return;
     }
 
     setBusy(true);
     try {
-      const order = await db.getOrderByReference(needle);
+      const order = await db.getOrderByReference(needle, mail);
       if (!order) {
-        toast.error('Aucune commande avec cette référence.');
+        toast.error('Aucune commande ne correspond à cette référence et cet email.');
         return;
       }
+      rememberGuestOrderEmail(order.reference, mail);
       router.push(`/commandes/${order.reference}`);
     } finally {
       setBusy(false);
@@ -50,14 +60,24 @@ const OrderLookup = () => {
     <Card style={styles.lookup}>
       <AppText variant="captionStrong">Suivre une commande</AppText>
       <AppText variant="caption">
-        Indiquez le numéro figurant sur votre billet, même sans compte.
+        Indiquez le numéro figurant sur votre confirmation, ainsi que l’email de la commande.
       </AppText>
       <Input
-        placeholder="TS-24081"
+        placeholder="BAB-…"
         value={reference}
         onChangeText={setReference}
         autoCapitalize="characters"
         autoCorrect={false}
+        onSubmitEditing={submit}
+        returnKeyType="next"
+      />
+      <Input
+        placeholder="Email de la commande"
+        value={email}
+        onChangeText={setEmail}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="email-address"
         onSubmitEditing={submit}
         returnKeyType="go"
       />
@@ -69,6 +89,7 @@ const OrderLookup = () => {
 export default function OrdersScreen() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
+  const { contentStyle } = useBreakpoint();
 
   const { data, loading, error, refreshing, reload } = useAsync(
     () => (user ? db.getOrders(user.id) : Promise.resolve([])),
@@ -81,7 +102,7 @@ export default function OrdersScreen() {
     return (
       <View style={styles.root}>
         <ScreenHeader title="Mes commandes" withStatusBar />
-        <View style={styles.content}>
+        <View style={[styles.content, contentStyle]}>
           <OrderLookup />
           <EmptyState
             icon="lock-closed-outline"
@@ -104,7 +125,7 @@ export default function OrdersScreen() {
       />
 
       {loading ? (
-        <View style={styles.content}>
+        <View style={[styles.content, contentStyle]}>
           <ListSkeleton count={4} height={128} />
         </View>
       ) : error ? (
@@ -115,62 +136,72 @@ export default function OrdersScreen() {
           title="Aucune commande pour l’instant"
           message="Vos commandes apparaîtront ici avec leur suivi détaillé, du paiement à la livraison."
           actionLabel="Découvrir nos produits"
-          onAction={() => router.push('/catalogue')}
+          onAction={() => router.push('/categories')}
         />
       ) : (
         <FlatList
           data={orders}
           keyExtractor={(item) => item.reference}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, contentStyle]}
           ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={reload} tintColor={colors.primary} />
           }
           renderItem={({ item }) => (
-            <Pressable
-              onPress={() => router.push(`/commandes/${item.reference}`)}
-              accessibilityRole="button"
-              accessibilityLabel={`Commande ${item.reference}`}
-              style={({ pressed }) => [styles.card, pressed ? styles.pressed : null]}
-            >
+            <View style={styles.card}>
               <View style={styles.cardHeader}>
-                <View style={styles.cardHeaderLeft}>
+                <Pressable
+                  onPress={() => router.push(`/commandes/${item.reference}`)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Commande ${item.reference}`}
+                  style={({ pressed }) => [styles.cardHeaderLeft, pressed ? styles.pressed : null]}
+                >
                   <AppText variant="bodyStrong">{item.reference}</AppText>
                   <AppText variant="micro" color={colors.muted}>
                     {formatDate(item.created_at)}
                   </AppText>
-                </View>
+                </Pressable>
 
-                <OrderStatusBadge status={item.status} />
+                <View style={styles.cardHeaderRight}>
+                  <TicketActions order={item} compact />
+                  <OrderStatusBadge status={item.status} />
+                </View>
               </View>
 
-              <AppText variant="caption" numberOfLines={2}>
-                {item.items.map((line) => `${line.quantity} × ${line.name}`).join(' · ')}
-              </AppText>
-
-              <View style={styles.cardFooter}>
-                <AppText variant="captionStrong">
-                  {pluralize(
-                    item.items.reduce((sum, line) => sum + line.quantity, 0),
-                    'article',
-                  )}
+              <Pressable
+                onPress={() => router.push(`/commandes/${item.reference}`)}
+                accessibilityRole="button"
+                accessibilityLabel={`Détail de la commande ${item.reference}`}
+                style={({ pressed }) => [styles.cardBody, pressed ? styles.pressed : null]}
+              >
+                <AppText variant="caption" numberOfLines={2}>
+                  {item.items.map((line) => `${line.quantity} × ${line.name}`).join(' · ')}
                 </AppText>
 
-                <View style={styles.cardFooterRight}>
-                  <AppText variant="subheading">{formatPrice(item.total)}</AppText>
-                  <Ionicons name="chevron-forward" size={17} color={colors.mutedLight} />
-                </View>
-              </View>
-
-              {item.tracking_number ? (
-                <View style={styles.tracking}>
-                  <Ionicons name="cube-outline" size={13} color={colors.primary} />
-                  <AppText variant="micro" color={colors.primary}>
-                    Suivi : {item.tracking_number}
+                <View style={styles.cardFooter}>
+                  <AppText variant="captionStrong">
+                    {pluralize(
+                      item.items.reduce((sum, line) => sum + line.quantity, 0),
+                      'article',
+                    )}
                   </AppText>
+
+                  <View style={styles.cardFooterRight}>
+                    <AppText variant="subheading">{formatPrice(item.total)}</AppText>
+                    <Ionicons name="chevron-forward" size={17} color={colors.mutedLight} />
+                  </View>
                 </View>
-              ) : null}
-            </Pressable>
+
+                {item.tracking_number ? (
+                  <View style={styles.tracking}>
+                    <Ionicons name="cube-outline" size={13} color={colors.primary} />
+                    <AppText variant="micro" color={colors.primary}>
+                      Suivi : {item.tracking_number}
+                    </AppText>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
           )}
         />
       )}
@@ -181,7 +212,6 @@ export default function OrdersScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceAlt },
   content: {
-    padding: layout.screenPadding,
     paddingBottom: spacing.huge,
     width: '100%',
     maxWidth: layout.maxContentWidth,
@@ -202,7 +232,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  cardHeaderLeft: { gap: 1 },
+  cardHeaderLeft: { gap: 1, flex: 1 },
+  cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  cardBody: { gap: spacing.sm },
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',

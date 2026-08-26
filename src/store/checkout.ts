@@ -80,14 +80,13 @@ export const useCheckoutStore = create<CheckoutState>()(
         }),
     }),
     {
-      name: 'basseapple.checkout.v1',
+      name: 'basseapple.checkout.v2',
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         contact: state.contact,
         address: state.address,
         paymentMethod: state.paymentMethod,
         mobileNumber: state.mobileNumber,
-        lastOrder: state.lastOrder,
       }),
     },
   ),

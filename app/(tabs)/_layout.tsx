@@ -69,6 +69,16 @@ export default function TabsLayout() {
       />
 
       <Tabs.Screen
+        name="commandes"
+        options={{
+          title: 'Commandes',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'receipt' : 'receipt-outline'} size={22} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
         name="panier"
         options={{
           title: 'Panier',

@@ -44,10 +44,11 @@ export interface CreateOrderPayload {
   user_id: string | null;
   items: {
     product_id: string;
+    quantity: number;
+    variant_ids: string[];
     name: string;
     image: string;
     variant_label: string | null;
-    quantity: number;
     unit_price: number;
   }[];
   subtotal: number;
@@ -58,6 +59,7 @@ export interface CreateOrderPayload {
   payment_method: PaymentMethodId;
   shipping_address: ShippingAddress;
   promo_code: string | null;
+  idempotency_key?: string;
 }
 
 export type ProductDraft = Omit<
@@ -118,7 +120,7 @@ export interface Repository {
   /* --- Commandes --- */
   createOrder(payload: CreateOrderPayload): Promise<Order>;
   getOrders(userId: string): Promise<Order[]>;
-  getOrderByReference(reference: string): Promise<Order | null>;
+  getOrderByReference(reference: string, email?: string | null): Promise<Order | null>;
 
   /* --- Administration --- */
   adminListOrders(search?: string, status?: OrderStatus | 'all'): Promise<Order[]>;

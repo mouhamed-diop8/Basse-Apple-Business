@@ -1,6 +1,8 @@
 -- Commandes : création et lecture via fonctions SECURITY DEFINER.
 -- Sans cela, RLS empêche de relire une commande invité (et souvent d'insérer
 -- les lignes d'articles), donc l'écran de confirmation reste vide.
+--
+-- Les montants, le stock et le suivi invité sont durcis dans 0003_security.sql.
 
 create or replace function public.lookup_store_order(p_reference text)
 returns jsonb

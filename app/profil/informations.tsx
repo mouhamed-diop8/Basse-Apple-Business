@@ -22,7 +22,7 @@ import {
 import { useAuthStore } from '@/store/auth';
 import { toast } from '@/store/toast';
 import { colors, layout, spacing } from '@/theme';
-import { isValidEmail, isValidPhone, required } from '@/utils/validation';
+import { isValidPhone, required } from '@/utils/validation';
 
 type Field = 'first_name' | 'last_name' | 'email' | 'phone';
 
@@ -84,7 +84,6 @@ export default function ProfileInfoScreen() {
     const next: Partial<Record<Field, string>> = {
       first_name: required(form.first_name, 'Le prénom'),
       last_name: required(form.last_name, 'Le nom'),
-      email: isValidEmail(form.email) ? undefined : 'Adresse email invalide.',
       phone: isValidPhone(form.phone) ? undefined : 'Numéro de téléphone invalide.',
     };
 
@@ -94,7 +93,6 @@ export default function ProfileInfoScreen() {
     const ok = await updateProfile({
       first_name: form.first_name.trim(),
       last_name: form.last_name.trim(),
-      email: form.email.trim(),
       phone: form.phone.trim(),
       avatar_url: avatar,
     });
@@ -172,14 +170,11 @@ export default function ProfileInfoScreen() {
             </View>
 
             <Input
-              label="Email"
+              label="Email de connexion"
               icon="mail-outline"
               value={form.email}
-              onChangeText={set('email')}
-              error={errors.email}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              required
+              editable={false}
+              hint="L’email du compte ne se change pas ici."
             />
 
             <Input

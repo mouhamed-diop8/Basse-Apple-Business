@@ -2,11 +2,11 @@ import { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 
 import { getSupabase } from '@/lib/supabase';
 import { effectivePrice } from '@/utils/format';
-import { getShippingMethod, PAGE_SIZE } from '../constants';
+import { PAGE_SIZE } from '../constants';
 import { demoCategories } from '../demo/categories';
 import { demoProducts } from '../demo/products';
 import { demoPromoCodes } from '../demo/promos';
-import { applyPromo, normalizeCode } from '../promo';
+import { normalizeCode } from '../promo';
 import {
   AuthSession,
   CategoryDraft,
@@ -31,6 +31,7 @@ import {
   ProductFilters,
   ProductVariant,
   PromoCode,
+  AppliedPromo,
   Review,
   SortOption,
   User,
@@ -50,6 +51,17 @@ const fail = (error: PostgrestError | { message: string } | null, fallback: stri
   }
 
   throw new RepositoryError(message, 'unknown');
+};
+
+/** Neutralise les métacaractères PostgREST / LIKE dans un filtre `ilike`. */
+const ilikePattern = (value: string): string | null => {
+  const cleaned = value
+    .replace(/[%_,.()\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+
+  return cleaned ? `%${cleaned}%` : null;
 };
 
 /* --------------------------------------------------------------- mapping --- */
@@ -97,6 +109,7 @@ const rowToOrder = (row: Record<string, any>): Order => ({
   items: (row.order_items ?? []).map((item: Record<string, any>) => ({
     ...item,
     unit_price: Number(item.unit_price),
+    variant_ids: Array.isArray(item.variant_ids) ? item.variant_ids : [],
   })),
 });
 
@@ -106,9 +119,6 @@ const parseStoreOrder = (payload: unknown): Order | null => {
   if (!body.order) return null;
   return rowToOrder({ ...body.order, order_items: body.items ?? [] });
 };
-
-const newOrderReference = (): string =>
-  `BAB-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
 
 const SORT_COLUMNS: Partial<Record<SortOption, { column: string; ascending: boolean }>> = {
   price_asc: { column: 'price', ascending: true },
@@ -146,13 +156,17 @@ export class SupabaseRepository implements Repository {
     // puis on applique le scoring de pertinence local (section 29). Sans terme,
     // filtrage, tri et pagination se font entièrement côté serveur.
     if (filters.query.trim()) {
-      const term = `%${filters.query.trim()}%`;
+      const term = ilikePattern(filters.query);
 
       const { data, error } = await this.db
         .from('products')
         .select(PRODUCT_SELECT)
         .eq('is_active', true)
-        .or(`name.ilike.${term},brand.ilike.${term},description.ilike.${term},sku.ilike.${term}`)
+        .or(
+          term
+            ? `name.ilike.${term},brand.ilike.${term},description.ilike.${term},sku.ilike.${term}`
+            : 'is_active.eq.true',
+        )
         .limit(200);
 
       if (error) fail(error, 'La recherche a échoué.');
@@ -367,10 +381,10 @@ export class SupabaseRepository implements Repository {
     });
 
     if (error) {
-      if (/already registered|already exists/i.test(error.message)) {
-        throw new RepositoryError('Un compte existe déjà avec cet email.', 'email_taken');
-      }
-      fail(error, 'Inscription impossible.');
+      throw new RepositoryError(
+        'Inscription impossible. Si vous avez déjà un compte, connectez-vous.',
+        'email_taken',
+      );
     }
 
     if (!data.session || !data.user) {
@@ -431,8 +445,16 @@ export class SupabaseRepository implements Repository {
   }
 
   async updateProfile(userId: string, patch: Partial<User>): Promise<User> {
-    // Le rôle est protégé par un trigger côté base ; on ne l'envoie jamais ici.
-    const { role: _role, id: _id, ...safe } = patch;
+    const { role: _role, id: _id, email: _email, created_at: _created, ...rest } = patch;
+    const safe: Record<string, unknown> = { ...rest };
+
+    if ('avatar_url' in rest) {
+      const uri = rest.avatar_url;
+      safe.avatar_url =
+        typeof uri === 'string' && /^(https:\/\/|file:\/\/|content:)/i.test(uri) && !/javascript:/i.test(uri)
+          ? uri.slice(0, 500)
+          : null;
+    }
 
     const { data, error } = await this.db
       .from('profiles')
@@ -478,62 +500,63 @@ export class SupabaseRepository implements Repository {
   /* ---------------------------------------------------------- Codes promo */
 
   async validatePromoCode(code: string, subtotal: number) {
-    const { data, error } = await this.db
-      .from('promo_codes')
-      .select('*')
-      .eq('code', normalizeCode(code))
-      .maybeSingle();
+    const { data, error } = await this.db.rpc('validate_store_promo', {
+      p_code: normalizeCode(code),
+      p_subtotal: subtotal,
+    });
 
-    if (error) fail(error, 'Impossible de vérifier ce code.');
+    if (error) {
+      throw new RepositoryError(
+        /promo|minimum|limite/i.test(error.message)
+          ? error.message
+          : 'Ce code promo n’existe pas ou n’est plus actif.',
+        'invalid_promo',
+      );
+    }
 
-    return applyPromo(
-      data
-        ? ({ ...data, value: Number(data.value), min_order: Number(data.min_order) } as PromoCode)
-        : undefined,
-      subtotal,
-    );
+    const body = data as { code?: string; type?: AppliedPromo['type']; value?: number; amount?: number };
+    if (!body?.code || body.amount == null) {
+      throw new RepositoryError('Ce code promo n’existe pas ou n’est plus actif.', 'invalid_promo');
+    }
+
+    return {
+      code: body.code,
+      type: body.type === 'fixed' ? 'fixed' : 'percentage',
+      value: Number(body.value),
+      amount: Number(body.amount),
+    } satisfies AppliedPromo;
   }
 
   /* ------------------------------------------------------------ Commandes */
 
   async createOrder(payload: CreateOrderPayload): Promise<Order> {
-    const reference = newOrderReference();
-    const now = new Date().toISOString();
-    const paid = payload.payment_method !== 'cash_on_delivery';
-
-    const history = [{ status: 'received', date: now, note: 'Commande enregistrée' }];
-    if (paid) history.push({ status: 'payment_confirmed', date: now, note: 'Paiement confirmé' });
-
     const { data, error } = await this.db.rpc('place_store_order', {
       p_order: {
-        id: reference,
-        reference,
-        user_id: payload.user_id,
-        subtotal: payload.subtotal,
-        shipping_cost: payload.shipping_cost,
-        discount: payload.discount,
-        total: payload.total,
-        status: paid ? 'payment_confirmed' : 'received',
-        payment_status: paid ? 'paid' : 'pending',
         payment_method: payload.payment_method,
         shipping_method: payload.shipping_method,
         shipping_address: payload.shipping_address,
         promo_code: payload.promo_code,
-        eta: getShippingMethod(payload.shipping_method).eta,
-        customer_name: `${payload.shipping_address.first_name} ${payload.shipping_address.last_name}`,
-        customer_phone: payload.shipping_address.phone,
-        customer_email: payload.shipping_address.email,
-        history,
+        idempotency_key: payload.idempotency_key ?? null,
       },
-      p_items: payload.items,
+      p_items: payload.items.map((item) => ({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        variant_ids: item.variant_ids ?? [],
+      })),
     });
 
     if (error) {
-      if (/stock insuffisant|introuvable/i.test(error.message)) {
+      if (/stock insuffisant|introuvable|Variante/i.test(error.message)) {
         throw new RepositoryError(
           'Un article n’est plus disponible en quantité suffisante.',
           'out_of_stock',
         );
+      }
+      if (/promo/i.test(error.message)) {
+        throw new RepositoryError(error.message, 'invalid_promo');
+      }
+      if (/Trop de commandes/i.test(error.message)) {
+        throw new RepositoryError('Trop de commandes. Réessayez plus tard.', 'forbidden');
       }
       fail(error, 'Impossible d’enregistrer la commande.');
     }
@@ -554,9 +577,10 @@ export class SupabaseRepository implements Repository {
     return (data ?? []).map(rowToOrder);
   }
 
-  async getOrderByReference(reference: string): Promise<Order | null> {
+  async getOrderByReference(reference: string, email?: string | null): Promise<Order | null> {
     const { data, error } = await this.db.rpc('lookup_store_order', {
-      p_reference: reference,
+      p_reference: reference.trim(),
+      p_email: email?.trim() || null,
     });
 
     if (error) fail(error, 'Impossible de charger cette commande.');
@@ -570,8 +594,8 @@ export class SupabaseRepository implements Repository {
 
     if (status !== 'all') query = query.eq('status', status);
 
-    if (search.trim()) {
-      const term = `%${search.trim()}%`;
+    const term = ilikePattern(search);
+    if (term) {
       query = query.or(
         `reference.ilike.${term},customer_name.ilike.${term},customer_phone.ilike.${term},customer_email.ilike.${term}`,
       );
@@ -611,13 +635,14 @@ export class SupabaseRepository implements Repository {
     }
 
     if (status === 'cancelled' && current.status !== 'cancelled') {
-      for (const item of current.items) {
-        await this.db.rpc('consume_stock', {
-          p_product_id: item.product_id,
-          p_quantity: -item.quantity,
-        });
-      }
-      if (current.payment_status === 'paid') patch.payment_status = 'refunded';
+      const { data, error } = await this.db.rpc('admin_cancel_store_order', {
+        p_reference: reference,
+        p_note: note ?? null,
+      });
+      if (error) fail(error, 'Impossible d’annuler cette commande.');
+      const cancelled = parseStoreOrder(data);
+      if (!cancelled) fail({ message: 'empty' }, 'Impossible d’annuler cette commande.');
+      return cancelled;
     }
 
     return this.patchOrder(reference, patch);
@@ -787,10 +812,10 @@ export class SupabaseRepository implements Repository {
   async adminListCustomers(search = ''): Promise<CustomerSummary[]> {
     let query = this.db.from('profiles').select('*').eq('role', 'customer');
 
-    if (search.trim()) {
-      const term = `%${search.trim()}%`;
+    const customerTerm = ilikePattern(search);
+    if (customerTerm) {
       query = query.or(
-        `first_name.ilike.${term},last_name.ilike.${term},email.ilike.${term},phone.ilike.${term}`,
+        `first_name.ilike.${customerTerm},last_name.ilike.${customerTerm},email.ilike.${customerTerm},phone.ilike.${customerTerm}`,
       );
     }
 

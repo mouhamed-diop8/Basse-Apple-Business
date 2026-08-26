@@ -18,12 +18,13 @@ export interface PaymentRequest {
 /**
  * Passerelle de paiement.
  *
- * L'intégration réelle (Stripe, PayPal, agrégateur mobile money) se branche
- * ici : la signature et le contrat de retour sont conçus pour ne pas changer.
- * En attendant les clés marchandes, l'autorisation est simulée côté client.
+ * L’intégration réelle (Stripe, PayPal, agrégateur mobile money) se branche
+ * ici. Tant que les clés marchandes ne sont pas configurées, l’appel est
+ * simulé côté client pour valider le parcours. Le serveur n’enregistre jamais
+ * un paiement comme réglé à partir de ce résultat : le statut reste `pending`
+ * jusqu’à confirmation manuelle (ou un prestataire serveur plus tard).
  *
- * Aucune donnée de carte ne quitte cette fonction : seul le résultat est
- * transmis à l'application, et la commande n'enregistre que le moyen utilisé.
+ * Aucune donnée de carte ne quitte cette fonction.
  */
 export const authorizePayment = async (request: PaymentRequest): Promise<PaymentResult> => {
   // Le paiement à la livraison n'appelle aucun prestataire.

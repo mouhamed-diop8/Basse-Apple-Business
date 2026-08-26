@@ -206,6 +206,8 @@ export interface OrderItem {
   name: string;
   image: string;
   variant_label: string | null;
+  /** Identifiants de variantes, utilisés pour restituer le stock à l’annulation. */
+  variant_ids?: string[];
   quantity: number;
   unit_price: number;
 }

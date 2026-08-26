@@ -89,49 +89,48 @@ export default function NotificationsScreen() {
             const visual = KIND_VISUALS[item.kind];
 
             return (
-              <Pressable
-                onPress={() => {
-                  markRead(item.id);
-                  if (item.target) router.push(item.target as never);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={item.title}
-                style={({ pressed }) => [
-                  styles.card,
-                  item.read ? null : styles.cardUnread,
-                  pressed ? styles.pressed : null,
-                ]}
-              >
-                <View style={[styles.icon, { backgroundColor: visual.bg }]}>
-                  <Ionicons name={visual.icon} size={19} color={visual.tint} />
-                </View>
-
-                <View style={styles.body}>
-                  <View style={styles.titleRow}>
-                    <AppText variant="captionStrong" style={styles.flex} numberOfLines={2}>
-                      {item.title}
-                    </AppText>
-                    {item.read ? null : <View style={styles.dot} />}
+              <View style={[styles.card, item.read ? null : styles.cardUnread]}>
+                <Pressable
+                  onPress={() => {
+                    markRead(item.id);
+                    if (item.target) router.push(item.target as never);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.title}
+                  style={({ pressed }) => [styles.cardMain, pressed ? styles.pressed : null]}
+                >
+                  <View style={[styles.icon, { backgroundColor: visual.bg }]}>
+                    <Ionicons name={visual.icon} size={19} color={visual.tint} />
                   </View>
 
-                  <AppText variant="caption" numberOfLines={3}>
-                    {item.body}
-                  </AppText>
+                  <View style={styles.body}>
+                    <View style={styles.titleRow}>
+                      <AppText variant="captionStrong" style={styles.flex} numberOfLines={2}>
+                        {item.title}
+                      </AppText>
+                      {item.read ? null : <View style={styles.dot} />}
+                    </View>
 
-                  <AppText variant="micro" color={colors.mutedLight}>
-                    {formatRelative(item.created_at)}
-                  </AppText>
-                </View>
+                    <AppText variant="caption" numberOfLines={3}>
+                      {item.body}
+                    </AppText>
+
+                    <AppText variant="micro" color={colors.mutedLight}>
+                      {formatRelative(item.created_at)}
+                    </AppText>
+                  </View>
+                </Pressable>
 
                 <Pressable
                   onPress={() => remove(item.id)}
                   hitSlop={10}
                   accessibilityRole="button"
                   accessibilityLabel="Supprimer la notification"
+                  style={styles.delete}
                 >
                   <Ionicons name="close" size={17} color={colors.mutedLight} />
                 </Pressable>
-              </Pressable>
+              </View>
             );
           }}
         />
@@ -167,13 +166,20 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: spacing.md,
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.lg,
   },
+  cardMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    minWidth: 0,
+  },
+  delete: { paddingLeft: spacing.sm, paddingTop: 2 },
   cardUnread: { borderColor: colors.primary, backgroundColor: colors.white },
   pressed: { backgroundColor: colors.surfaceAlt },
   icon: {

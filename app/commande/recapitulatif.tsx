@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { CheckoutShell } from '@/components/checkout/CheckoutShell';
@@ -13,11 +13,13 @@ import { authorizePayment } from '@/services/payment';
 import { useAuthStore } from '@/store/auth';
 import { useCartStore, useCartTotals } from '@/store/cart';
 import { useCheckoutStore } from '@/store/checkout';
+import { rememberGuestOrderEmail } from '@/store/guestOrder';
 import { useNotificationsStore } from '@/store/notifications';
 import { toast } from '@/store/toast';
 import { colors, radius, spacing } from '@/theme';
 import { formatPrice } from '@/utils/format';
 import { maskCardNumber } from '@/utils/validation';
+import { downloadOrderTicket } from '@/utils/receipt';
 
 const SummaryRow = ({
   icon,
@@ -71,6 +73,9 @@ export default function CheckoutSummaryScreen() {
   const notifyOrderCreated = useNotificationsStore((state) => state.notifyOrderCreated);
 
   const [submitting, setSubmitting] = useState(false);
+  const idempotencyKey = useRef(
+    `idemp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`,
+  );
 
   const shipping = getShippingMethod(shippingMethod);
   const payment = getPaymentMethod(paymentMethod);
@@ -113,6 +118,7 @@ export default function CheckoutSummaryScreen() {
           name: line.name,
           image: line.image,
           variant_label: line.variant_label,
+          variant_ids: line.variant_ids,
           quantity: line.quantity,
           unit_price: line.unit_price,
         })),
@@ -130,12 +136,21 @@ export default function CheckoutSummaryScreen() {
           ...address,
         },
         promo_code: promo?.code ?? null,
+        idempotency_key: idempotencyKey.current,
       });
 
+      rememberGuestOrderEmail(order.reference, order.customer_email);
       notifyOrderCreated(order);
       setLastOrder(order);
       clearCart();
       resetCheckout();
+
+      try {
+        await downloadOrderTicket(order);
+        toast.success('Votre confirmation PDF a été téléchargée.');
+      } catch {
+        // L’écran suivant propose encore le téléchargement du PDF.
+      }
 
       router.replace(`/commande/confirmee/${order.reference}`);
     } catch (error) {

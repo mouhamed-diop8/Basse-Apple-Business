@@ -5,6 +5,7 @@ import * as Sharing from 'expo-sharing';
 import { getPaymentMethod, getShippingMethod, STORE } from '@/data/constants';
 import { Order } from '@/data/types';
 import { formatDateTime, formatPrice } from '@/utils/format';
+import { buildOrderTicketPdf, ticketPdfFilename } from '@/utils/orderPdf';
 
 const escapeHtml = (value: string): string =>
   value
@@ -13,7 +14,12 @@ const escapeHtml = (value: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-const ticketFilename = (reference: string): string => `Billet-${reference}`;
+const paymentNote = (order: Order): string => {
+  if (order.payment_status !== 'pending') return '';
+  return order.payment_method === 'cash_on_delivery'
+    ? ' — à régler à la réception'
+    : ' — en attente de confirmation';
+};
 
 /** HTML du billet de commande, prêt à imprimer ou enregistrer en PDF. */
 export const buildOrderTicketHtml = (order: Order): string => {
@@ -88,9 +94,22 @@ export const buildOrderTicketHtml = (order: Order): string => {
     .totals .grand { font-size: 18px; font-weight: 700; border-top: 1px solid #E8E8EC; margin-top: 8px; padding-top: 12px; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
     .footer { margin-top: 32px; font-size: 12px; color: #8A8A8E; text-align: center; }
+    .tickets { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+    .ticket {
+      border: 1px dashed #D8D8DE;
+      border-radius: 12px;
+      padding: 14px 16px;
+      page-break-inside: avoid;
+    }
+    .ticket .ref { font-size: 14px; letter-spacing: 0.06em; margin-top: 8px; }
+    @page { size: A4; margin: 12mm; }
     @media print {
       body { background: #fff; }
-      .sheet { margin: 0; border: 0; border-radius: 0; padding: 12px; }
+      .sheet { margin: 0; border: 0; border-radius: 0; padding: 12px; box-shadow: none; }
+      .ticket { break-inside: avoid; }
+    }
+    @media (max-width: 640px) {
+      .grid, .tickets { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -103,7 +122,7 @@ export const buildOrderTicketHtml = (order: Order): string => {
         <div class="muted">${escapeHtml(STORE.tagline)}</div>
       </div>
       <div>
-        <div class="eyebrow">Billet de commande</div>
+        <div class="eyebrow">Confirmation de commande</div>
         <div class="ref">${escapeHtml(order.reference)}</div>
         <div class="muted">${escapeHtml(formatDateTime(order.created_at))}</div>
       </div>
@@ -156,7 +175,27 @@ export const buildOrderTicketHtml = (order: Order): string => {
           : ''
       }
       <div class="grand"><span>Total</span><span>${escapeHtml(formatPrice(order.total))}</span></div>
-      <div class="muted">${escapeHtml(payment.label)}${order.payment_status === 'pending' ? ' — à régler à la réception' : ''}</div>
+      <div class="muted">${escapeHtml(payment.label)}${escapeHtml(paymentNote(order))}</div>
+    </div>
+
+    <hr />
+    <div class="eyebrow">Tickets articles</div>
+    <div class="tickets">
+      ${order.items
+        .map(
+          (item) => `
+        <div class="ticket">
+          <div class="eyebrow">Ticket</div>
+          <strong>${escapeHtml(item.name)}</strong>
+          <div class="muted">
+            ${item.variant_label ? `${escapeHtml(item.variant_label)} · ` : ''}
+            ${item.quantity} × ${escapeHtml(formatPrice(item.unit_price))}
+          </div>
+          <div class="ref">${escapeHtml(order.reference)}</div>
+          <div class="muted">${escapeHtml(STORE.name)}</div>
+        </div>`,
+        )
+        .join('')}
     </div>
 
     <p class="footer">
@@ -168,12 +207,12 @@ export const buildOrderTicketHtml = (order: Order): string => {
 </html>`;
 };
 
-const downloadHtmlWeb = (html: string, filename: string) => {
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+const downloadPdfWeb = (bytes: Uint8Array, filename: string) => {
+  const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${filename}.html`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -214,27 +253,39 @@ const printHtmlWeb = (html: string): boolean => {
 };
 
 /**
- * Télécharge ou partage le billet : PDF natif, fichier + impression sur le web.
+ * Télécharge la confirmation au format PDF.
  */
 export const downloadOrderTicket = async (order: Order): Promise<void> => {
-  const html = buildOrderTicketHtml(order);
-  const name = ticketFilename(order.reference);
-
   if (Platform.OS === 'web') {
-    downloadHtmlWeb(html, name);
-    printHtmlWeb(html);
+    const bytes = await buildOrderTicketPdf(order);
+    downloadPdfWeb(bytes, ticketPdfFilename(order.reference));
     return;
   }
 
+  const html = buildOrderTicketHtml(order);
   const { uri } = await Print.printToFileAsync({ html });
   const canShare = await Sharing.isAvailableAsync();
 
   if (canShare) {
     await Sharing.shareAsync(uri, {
       mimeType: 'application/pdf',
-      dialogTitle: `Billet ${order.reference}`,
+      dialogTitle: `Confirmation ${order.reference}`,
       UTI: 'com.adobe.pdf',
     });
+    return;
+  }
+
+  await Print.printAsync({ html });
+};
+
+/** Ouvre l’aperçu d’impression (le navigateur permet d’enregistrer en PDF). */
+export const printOrderTicket = async (order: Order): Promise<void> => {
+  const html = buildOrderTicketHtml(order);
+
+  if (Platform.OS === 'web') {
+    if (!printHtmlWeb(html)) {
+      throw new Error('print-failed');
+    }
     return;
   }
 

@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { getShippingMethod, PAGE_SIZE } from '../constants';
+import { FREE_SHIPPING_THRESHOLD, getShippingMethod, PAGE_SIZE } from '../constants';
 import { demoCategories } from '../demo/categories';
 import { demoOrders } from '../demo/orders';
 import { demoProducts } from '../demo/products';
@@ -8,6 +8,7 @@ import { demoPromoCodes } from '../demo/promos';
 import { demoReviews } from '../demo/reviews';
 import { DEMO_CREDENTIALS, demoUsers } from '../demo/users';
 import { applyPromo, normalizeCode } from '../promo';
+import { effectivePrice } from '@/utils/format';
 import { checkPassword, isValidEmail, isValidPhone, titleCaseName } from '@/utils/validation';
 import {
   AuthSession,
@@ -97,6 +98,7 @@ export class LocalRepository implements Repository {
   private state: PersistedState = seedState();
   private hydrated = false;
   private session: AuthSession | null = null;
+  private idempotentOrders = new Map<string, string>();
 
   private async hydrate(): Promise<void> {
     if (this.hydrated) return;
@@ -453,11 +455,42 @@ export class LocalRepository implements Repository {
     await this.hydrate();
     await tick(320);
 
-    // Vérification du stock au dernier moment : il a pu changer depuis l'ajout au panier.
-    for (const item of payload.items) {
-      const product = this.state.products.find((p) => p.id === item.product_id);
-      if (!product) throw new RepositoryError(`« ${item.name} » n’est plus disponible.`, 'not_found');
-      if (product.stock < item.quantity) {
+    if (payload.payment_method === 'paypal') {
+      throw new RepositoryError('Moyen de paiement invalide.', 'unknown');
+    }
+
+    if (payload.idempotency_key) {
+      const existingRef = this.idempotentOrders.get(payload.idempotency_key);
+      const existing = existingRef
+        ? this.state.orders.find((order) => order.reference === existingRef)
+        : undefined;
+      if (existing) return clone(existing);
+    }
+
+    const priced = payload.items.map((item) => {
+      const product = this.state.products.find((p) => p.id === item.product_id && p.is_active);
+      if (!product) {
+        throw new RepositoryError(`« ${item.name} » n’est plus disponible.`, 'not_found');
+      }
+
+      const quantity = item.quantity;
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+        throw new RepositoryError('Quantité invalide.', 'unknown');
+      }
+
+      const variants = (item.variant_ids ?? []).map((id) => {
+        const variant = product.variants.find((entry) => entry.id === id);
+        if (!variant) throw new RepositoryError('Variante invalide.', 'unknown');
+        if (variant.stock < quantity) {
+          throw new RepositoryError(
+            `Il ne reste pas assez de stock pour « ${product.name} ».`,
+            'out_of_stock',
+          );
+        }
+        return variant;
+      });
+
+      if (product.stock < quantity) {
         throw new RepositoryError(
           product.stock === 0
             ? `« ${product.name} » est en rupture de stock.`
@@ -465,62 +498,94 @@ export class LocalRepository implements Repository {
           'out_of_stock',
         );
       }
+
+      const unit_price = round(
+        effectivePrice(product.price, product.sale_price) +
+          variants.reduce((sum, variant) => sum + variant.price_delta, 0),
+      );
+
+      return {
+        product,
+        variants,
+        quantity,
+        unit_price,
+        variant_ids: variants.map((variant) => variant.id),
+        variant_label: variants.length ? variants.map((variant) => variant.value).join(' · ') : null,
+      };
+    });
+
+    const subtotal = round(priced.reduce((sum, line) => sum + line.unit_price * line.quantity, 0));
+
+    let discount = 0;
+    let promoCode: string | null = null;
+    if (payload.promo_code) {
+      const promo = this.state.promos.find((entry) => entry.code === normalizeCode(payload.promo_code!));
+      const applied = applyPromo(promo, subtotal);
+      discount = applied.amount;
+      promoCode = applied.code;
     }
 
+    const shippingMethod = getShippingMethod(payload.shipping_method);
+    const shipping_cost =
+      payload.shipping_method === 'pickup'
+        ? 0
+        : payload.shipping_method === 'standard' && subtotal >= FREE_SHIPPING_THRESHOLD
+          ? 0
+          : shippingMethod.price;
+
     this.state.orderSequence += 1;
-    const reference = `TS-${this.state.orderSequence}`;
+    const reference = `BAB-${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`.toUpperCase();
     const now = new Date().toISOString();
 
     const order: Order = {
       id: reference,
       reference,
-      user_id: payload.user_id,
-      items: payload.items.map((item, index) => ({
+      user_id: this.session?.user.id ?? null,
+      items: priced.map((line, index) => ({
         id: `${reference}-item-${index}`,
         order_id: reference,
-        ...item,
+        product_id: line.product.id,
+        name: line.product.name,
+        image: line.product.images[0] ?? '',
+        variant_label: line.variant_label,
+        variant_ids: line.variant_ids,
+        quantity: line.quantity,
+        unit_price: line.unit_price,
       })),
-      subtotal: round(payload.subtotal),
-      shipping_cost: round(payload.shipping_cost),
-      discount: round(payload.discount),
-      total: round(payload.total),
+      subtotal,
+      shipping_cost,
+      discount,
+      total: round(Math.max(0, subtotal - discount + shipping_cost)),
       status: 'received',
-      payment_status: payload.payment_method === 'cash_on_delivery' ? 'pending' : 'paid',
+      payment_status: 'pending',
       payment_method: payload.payment_method,
       shipping_method: payload.shipping_method,
       shipping_address: payload.shipping_address,
-      promo_code: payload.promo_code,
+      promo_code: promoCode,
       tracking_number: null,
-      eta: getShippingMethod(payload.shipping_method).eta,
+      eta: shippingMethod.eta,
       customer_name: `${payload.shipping_address.first_name} ${payload.shipping_address.last_name}`,
       customer_phone: payload.shipping_address.phone,
-      customer_email: payload.shipping_address.email,
+      customer_email: payload.shipping_address.email.trim().toLowerCase(),
       history: [{ status: 'received', date: now, note: 'Commande enregistrée' }],
       created_at: now,
     };
 
-    // Un paiement immédiat fait directement avancer la commande d'une étape.
-    if (order.payment_status === 'paid') {
-      order.status = 'payment_confirmed';
-      order.history.push({
-        status: 'payment_confirmed',
-        date: now,
-        note: 'Paiement confirmé',
+    priced.forEach((line) => {
+      line.product.stock -= line.quantity;
+      line.product.units_sold += line.quantity;
+      line.variants.forEach((variant) => {
+        variant.stock -= line.quantity;
       });
-    }
-
-    payload.items.forEach((item) => {
-      const product = this.state.products.find((p) => p.id === item.product_id)!;
-      product.stock -= item.quantity;
-      product.units_sold += item.quantity;
     });
 
-    if (payload.promo_code) {
-      const promo = this.state.promos.find((p) => p.code === payload.promo_code);
+    if (promoCode) {
+      const promo = this.state.promos.find((entry) => entry.code === promoCode);
       if (promo) promo.usage_count += 1;
     }
 
     this.state.orders.unshift(order);
+    if (payload.idempotency_key) this.idempotentOrders.set(payload.idempotency_key, order.reference);
     await this.persist();
     return clone(order);
   }
@@ -536,12 +601,24 @@ export class LocalRepository implements Repository {
     );
   }
 
-  async getOrderByReference(reference: string): Promise<Order | null> {
+  async getOrderByReference(reference: string, email?: string | null): Promise<Order | null> {
     await this.hydrate();
     const found = this.state.orders.find(
       (o) => o.reference.toUpperCase() === reference.trim().toUpperCase(),
     );
-    return found ? clone(found) : null;
+    if (!found) return null;
+
+    const user = this.session?.user;
+    if (user?.role === 'admin' || (user && found.user_id === user.id)) {
+      return clone(found);
+    }
+
+    const needle = email?.trim().toLowerCase();
+    if (needle && found.customer_email.toLowerCase() === needle) {
+      return clone(found);
+    }
+
+    return null;
   }
 
   /* ------------------------------------------------------- Administration */
@@ -592,12 +669,16 @@ export class LocalRepository implements Repository {
     }
 
     if (status === 'cancelled' && previous !== 'cancelled') {
-      // L'annulation remet le stock en rayon.
       order.items.forEach((item) => {
         const product = this.state.products.find((p) => p.id === item.product_id);
-        if (!product) return;
-        product.stock += item.quantity;
-        product.units_sold = Math.max(0, product.units_sold - item.quantity);
+        if (product) {
+          product.stock += item.quantity;
+          product.units_sold = Math.max(0, product.units_sold - item.quantity);
+        }
+        (item.variant_ids ?? []).forEach((variantId) => {
+          const variant = product?.variants.find((entry) => entry.id === variantId);
+          if (variant) variant.stock += item.quantity;
+        });
       });
 
       if (order.payment_status === 'paid') order.payment_status = 'refunded';

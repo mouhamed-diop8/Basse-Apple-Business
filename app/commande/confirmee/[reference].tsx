@@ -1,40 +1,49 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Linking, Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProductVisual } from '@/components/product/ProductVisual';
+import { TicketActions } from '@/components/orders/TicketActions';
+import { OrderTicketPreview } from '@/components/orders/OrderTicketPreview';
 import { AppText, Button, Card, Divider, EmptyState, LoadingState, Reveal, SuccessBurst } from '@/components/ui';
 import { db } from '@/data';
 import { STORE, getPaymentMethod, getShippingMethod } from '@/data/constants';
 import { useAsync } from '@/hooks/useAsync';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useCheckoutStore } from '@/store/checkout';
+import { guestOrderEmail } from '@/store/guestOrder';
 import { toast } from '@/store/toast';
 import { colors, layout, radius, spacing } from '@/theme';
 import { formatDateTime, formatPrice } from '@/utils/format';
-import { downloadOrderTicket } from '@/utils/receipt';
 
 const paramValue = (value: string | string[] | undefined): string =>
   (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
 
 export default function OrderConfirmedScreen() {
-  const { reference: rawReference } = useLocalSearchParams<{ reference: string | string[] }>();
+  const { reference: rawReference } = useLocalSearchParams<{
+    reference: string | string[];
+  }>();
   const reference = paramValue(rawReference);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { screenPadding } = useBreakpoint();
-  const [ticketBusy, setTicketBusy] = useState(false);
 
   const cached = useCheckoutStore((state) =>
     state.lastOrder?.reference === reference ? state.lastOrder : null,
   );
 
   const { data: fetched, loading } = useAsync(
-    () => (reference ? db.getOrderByReference(reference) : Promise.resolve(null)),
-    [reference],
+    () =>
+      reference
+        ? db.getOrderByReference(
+            reference,
+            guestOrderEmail(reference) || cached?.customer_email,
+          )
+        : Promise.resolve(null),
+    [reference, cached?.customer_email],
   );
 
   const order = fetched ?? cached;
@@ -88,18 +97,6 @@ export default function OrderConfirmedScreen() {
     );
   }
 
-  const saveTicket = async () => {
-    setTicketBusy(true);
-    try {
-      await downloadOrderTicket(order);
-      toast.success('Billet de commande prêt. Enregistrez-le ou imprimez-le en PDF.');
-    } catch {
-      toast.error('Impossible de générer le billet. Réessayez.');
-    } finally {
-      setTicketBusy(false);
-    }
-  };
-
   const sendConfirmation = async () => {
     const subject = `Confirmation d’achat ${order.reference} — ${STORE.name}`;
     const mailto = `mailto:${encodeURIComponent(order.customer_email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(confirmationText)}`;
@@ -129,8 +126,8 @@ export default function OrderConfirmedScreen() {
               Confirmation d’achat
             </AppText>
             <AppText variant="caption" center style={styles.headingText}>
-              Merci {address.first_name}. Votre commande est enregistrée. Conservez ce récapitulatif
-              et votre billet pour la livraison.
+              Merci {address.first_name}. Votre commande est enregistrée. Le PDF de confirmation
+              se télécharge automatiquement et s’affiche ci-dessous.
             </AppText>
             <AppText variant="micro" center color={colors.muted}>
               Un exemplaire est associé à {order.customer_email}
@@ -157,6 +154,18 @@ export default function OrderConfirmedScreen() {
               <Ionicons name="copy-outline" size={17} color={colors.muted} />
             </Pressable>
           </Card>
+        </Reveal>
+
+        <Reveal delay={220}>
+          <View style={styles.pdfBlock}>
+            <AppText variant="subheading">Votre confirmation PDF</AppText>
+            <AppText variant="caption" color={colors.muted}>
+              Conservez ce PDF pour la livraison et le SAV. Vous pouvez le télécharger à nouveau
+              ci-dessous.
+            </AppText>
+            <TicketActions order={order} />
+            <OrderTicketPreview order={order} />
+          </View>
         </Reveal>
 
         <Reveal delay={260}>
@@ -192,7 +201,7 @@ export default function OrderConfirmedScreen() {
             <Divider />
 
             <View style={styles.detailRow}>
-              <AppText variant="caption">Total payé</AppText>
+              <AppText variant="caption">Total</AppText>
               <AppText variant="captionStrong">{formatPrice(order.total)}</AppText>
             </View>
             <Divider />
@@ -200,7 +209,11 @@ export default function OrderConfirmedScreen() {
               <AppText variant="caption">Paiement</AppText>
               <AppText variant="captionStrong">
                 {payment.label}
-                {order.payment_status === 'pending' ? ' (à la réception)' : ''}
+                {order.payment_status === 'pending'
+                  ? order.payment_method === 'cash_on_delivery'
+                    ? ' (à la réception)'
+                    : ' (en attente de confirmation)'
+                  : ''}
               </AppText>
             </View>
             <Divider />
@@ -238,15 +251,6 @@ export default function OrderConfirmedScreen() {
 
         <Reveal delay={360}>
           <View style={styles.actions}>
-            <Button
-              label="Télécharger le billet"
-              icon="download-outline"
-              onPress={saveTicket}
-              loading={ticketBusy}
-              fullWidth
-              haptic
-            />
-
             <Button
               label="Envoyer ma confirmation"
               variant="outline"
@@ -315,4 +319,5 @@ const styles = StyleSheet.create({
   detailColumn: { gap: spacing.xs, paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
   addressText: { lineHeight: 20 },
   actions: { gap: spacing.sm },
+  pdfBlock: { gap: spacing.md },
 });

@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
 import { Linking, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { OrderStatusBadge, OrderTimeline } from '@/components/orders/OrderTimeline';
+import { TicketActions } from '@/components/orders/TicketActions';
 import { ProductVisual } from '@/components/product/ProductVisual';
 import {
   AppText,
@@ -19,10 +19,10 @@ import {
 import { db } from '@/data';
 import { getPaymentMethod, getShippingMethod, whatsappUrl } from '@/data/constants';
 import { useAsync } from '@/hooks/useAsync';
+import { guestOrderEmail } from '@/store/guestOrder';
 import { toast } from '@/store/toast';
 import { colors, layout, radius, spacing } from '@/theme';
 import { formatDateTime, formatPrice } from '@/utils/format';
-import { downloadOrderTicket } from '@/utils/receipt';
 
 const PAYMENT_STATUS_LABELS: Record<string, string> = {
   pending: 'En attente',
@@ -32,15 +32,16 @@ const PAYMENT_STATUS_LABELS: Record<string, string> = {
 };
 
 export default function OrderDetailScreen() {
-  const { reference: rawReference } = useLocalSearchParams<{ reference: string | string[] }>();
+  const { reference: rawReference } = useLocalSearchParams<{
+    reference: string | string[];
+  }>();
   const reference = (Array.isArray(rawReference) ? rawReference[0] : rawReference)?.trim() ?? '';
   const router = useRouter();
 
   const { data: order, loading, error, refreshing, reload } = useAsync(
-    () => db.getOrderByReference(reference),
+    () => db.getOrderByReference(reference, guestOrderEmail(reference) ?? null),
     [reference],
   );
-  const [ticketBusy, setTicketBusy] = useState(false);
 
   if (loading) {
     return (
@@ -131,6 +132,8 @@ export default function OrderDetailScreen() {
             </Pressable>
           ) : null}
         </Card>
+
+        <TicketActions order={order} />
 
         <Card>
           <SectionHeader title="Suivi de la commande" />
@@ -251,23 +254,7 @@ export default function OrderDetailScreen() {
           ) : null}
         </Card>
 
-        <Button
-          label="Télécharger le billet"
-          icon="download-outline"
-          onPress={async () => {
-            setTicketBusy(true);
-            try {
-              await downloadOrderTicket(order);
-              toast.success('Billet de commande prêt.');
-            } catch {
-              toast.error('Impossible de générer le billet. Réessayez.');
-            } finally {
-              setTicketBusy(false);
-            }
-          }}
-          loading={ticketBusy}
-          fullWidth
-        />
+        <TicketActions order={order} />
 
         <Button
           label="Contacter le vendeur"

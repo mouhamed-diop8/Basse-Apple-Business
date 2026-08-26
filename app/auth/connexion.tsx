@@ -12,6 +12,7 @@ import { useFavoritesStore } from '@/store/favorites';
 import { toast } from '@/store/toast';
 import { colors, radius, spacing } from '@/theme';
 import { isValidEmail } from '@/utils/validation';
+import { safeInternalPath } from '@/utils/safeRedirect';
 
 export default function SignInScreen() {
   const router = useRouter();
@@ -42,8 +43,8 @@ export default function SignInScreen() {
 
     toast.success(`Bienvenue ${user?.first_name ?? ''} !`.trim());
 
-    // Une redirection est passée depuis le panier ou le checkout.
-    if (redirect) router.replace(redirect as never);
+    const next = safeInternalPath(redirect);
+    if (next) router.replace(next as never);
     else if (user?.role === 'admin') router.replace('/admin');
     else router.replace('/profil');
   };
